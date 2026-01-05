@@ -11,3 +11,5 @@ hifi-gan/
 checkpoints/
 proper_cache_strict.pt
 spev_advanced.py.back
+spev_dataset/
+DOWNLOADS/
