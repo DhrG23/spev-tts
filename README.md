@@ -59,6 +59,7 @@ chmod +x QUICKSTART.sh
 ```
 
 **Windows:**
+Use powershell (pwsh) not Windows Powershell (Default)
 ```powershell
 .\QUICKSTART.ps1
 ```
@@ -130,6 +131,16 @@ python spev_tts.py \
 ```
 
 ### Advanced Training (with Voice Controls)
+
+Expressive data (cannot be skipped)
+
+  If you want learned breathiness / emotion / vocal texture, you need:
+    *expressive speech datasets
+    *or manually labeled prosody
+    *or multi-style speakers
+  
+  Without data, no architecture will fix this.
+
 ```bash
 python spev_advanced.py \
   --mode train \
