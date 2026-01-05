@@ -118,7 +118,6 @@ Three-dimensional emotion space:
    - Compute global pitch statistics (mean, std)
    - Compute global energy statistics
    - Z-score normalize per-phoneme features
-   - Cache processed data (`proper_cache_strict.pt`)
 
 ### Phase 2: Model Training
 
