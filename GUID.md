@@ -242,7 +242,7 @@ pip install textgrid
 **Solution:** Download HiFi-GAN checkpoint
 ```bash
 cd vocoder_checkpoints
-wget https://drive.google.com/uc?id=1n0bsIYdTV79EFxkPF4v3g-zmF_6BTrtn -O LJ_FT_T2_V3.tar.gz
+wget https://drive.google.com/drive/folders/1-eEYTB5Av9jNql0WGBlRoi-WH2J7bp5Y?usp=sharing -O LJ_FT_T2_V3.tar.gz
 tar -xzf LJ_FT_T2_V3.tar.gz
 cd ..
 ```
@@ -311,7 +311,6 @@ After installation:
 
 - **Documentation**: See README.md
 - **Issues**: GitHub Issues
-- **System Check**: Run `./check_system.sh` to diagnose problems
 
 ---
 

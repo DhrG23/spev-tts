@@ -77,7 +77,7 @@ mkdir -p vocoder_checkpoints
 cd vocoder_checkpoints
 
 # Download LJ Speech fine-tuned HiFi-GAN
-wget https://drive.google.com/uc?id=1n0bsIYdTV79EFxkPF4v3g-zmF_6BTrtn -O LJ_FT_T2_V3.tar.gz
+wget https://drive.google.com/drive/folders/1-eEYTB5Av9jNql0WGBlRoi-WH2J7bp5Y?usp=sharing -O LJ_FT_T2_V3.tar.gz
 tar -xzf LJ_FT_T2_V3.tar.gz
 cd ..
 ```
@@ -92,14 +92,7 @@ cd ..
 
 4. **Prepare Training Data**
 
-**Option A: Use Pre-cached MFA Data**
-If you have `proper_cache_strict.pt` (pre-aligned phoneme data):
-```bash
-# Place the cache file in your project root
-cp /path/to/proper_cache_strict.pt .
-```
-
-**Option B: Download and Prepare Dataset**
+**Option A: Download and Prepare Dataset**
 ```bash
 # Download LJSpeech dataset
 python download_datasets.py --dataset single-speaker
@@ -108,7 +101,7 @@ python download_datasets.py --dataset single-speaker
 # - data/training_data_ljspeech/ (processed audio + transcripts)
 ```
 
-**Option C: Align Your Own Data with MFA**
+**Option B: Align Your Own Data with MFA**
 ```bash
 # Install Montreal Forced Aligner
 conda install -c conda-forge montreal-forced-aligner
