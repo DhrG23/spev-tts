@@ -1,0 +1,12 @@
+.idk/
+.vscode/
+data/
+__pycache__/
+eval_audio/
+mfa_aligner/
+test_outputs/
+vocoder_checkpoints/
+infer.py
+hifi-gan/
+checkpoints/
+proper_cache_strict.pt

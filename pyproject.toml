@@ -1,0 +1,159 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "spev-tts"
+version = "1.0.0"
+description = "SPEV: Advanced Text-to-Speech with Emotional Voice Control"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [
+    {name = "SPEV Development Team", email = "your.email@example.com"}
+]
+keywords = [
+    "text-to-speech",
+    "tts",
+    "speech-synthesis",
+    "fastspeech2",
+    "neural-tts",
+    "voice-synthesis",
+    "deep-learning",
+    "pytorch",
+    "emotional-speech",
+    "voice-control"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+dependencies = [
+    "torch>=2.0.0",
+    "torchaudio>=2.0.0",
+    "librosa>=0.10.0",
+    "soundfile>=0.12.1",
+    "numpy>=1.24.0,<2.0.0",
+    "scipy>=1.10.0",
+    "textgrid>=1.5.0",
+    "cmudict>=1.0.13",
+    "pandas>=2.0.0",
+    "requests>=2.31.0",
+    "tqdm>=4.65.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "black>=23.0.0",
+    "flake8>=6.0.0",
+    "isort>=5.12.0",
+    "mypy>=1.4.0",
+]
+
+docs = [
+    "sphinx>=6.0.0",
+    "sphinx-rtd-theme>=1.2.0",
+    "sphinxcontrib-napoleon>=0.7",
+]
+
+training = [
+    "tensorboard>=2.12.0",
+    "wandb>=0.15.0",
+    "matplotlib>=3.7.0",
+    "seaborn>=0.12.0",
+]
+
+alignment = [
+    "praatio>=6.0.0",
+]
+
+all = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "black>=23.0.0",
+    "flake8>=6.0.0",
+    "isort>=5.12.0",
+    "mypy>=1.4.0",
+    "sphinx>=6.0.0",
+    "sphinx-rtd-theme>=1.2.0",
+    "sphinxcontrib-napoleon>=0.7",
+    "tensorboard>=2.12.0",
+    "wandb>=0.15.0",
+    "matplotlib>=3.7.0",
+    "seaborn>=0.12.0",
+    "praatio>=6.0.0",
+]
+
+[project.scripts]
+spev-train = "spev_tts:main"
+spev-infer = "spev_tts:inference_mode"
+spev-advanced-train = "spev_advanced:main"
+spev-advanced-infer = "spev_advanced:inference_mode"
+spev-download = "download_datasets:main"
+
+[project.urls]
+Homepage = "https://github.com/yourusername/spev-tts"
+Documentation = "https://github.com/yourusername/spev-tts#readme"
+Repository = "https://github.com/yourusername/spev-tts"
+Issues = "https://github.com/yourusername/spev-tts/issues"
+
+[tool.setuptools]
+py-modules = ["spev_tts", "spev_advanced", "download_datasets"]
+
+[tool.setuptools.packages.find]
+exclude = ["tests*", "docs*", "examples*"]
+
+[tool.black]
+line-length = 120
+target-version = ['py38', 'py39', 'py310', 'py311']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+  | hifi-gan
+  | data
+  | checkpoints
+  | vocoder_checkpoints
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 120
+skip_gitignore = true
+extend_skip_glob = ["hifi-gan/*", "data/*", "checkpoints/*"]
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+addopts = "-v --cov=. --cov-report=html --cov-report=term"

@@ -1,0 +1,49 @@
+# MANIFEST.in - Include additional files in source distribution
+
+# Documentation
+include README.md
+include PRODUCTION_SYSTEM_SUMMARY.md
+include LICENSE
+
+# Requirements
+include requirements.txt
+include pyproject.toml
+
+# Scripts
+include QUICKSTART.sh
+include QUICKSTART.ps1
+include *.sh
+include *.bat
+
+# Configuration files
+include *.json
+include *.yaml
+include *.yml
+
+# Exclude unnecessary files
+global-exclude __pycache__
+global-exclude *.py[co]
+global-exclude .DS_Store
+global-exclude *.so
+global-exclude *.dylib
+global-exclude *.egg-info
+
+# Exclude data directories
+prune data
+prune checkpoints
+prune vocoder_checkpoints
+prune output
+prune hifi-gan
+prune .git
+prune venv
+prune env
+prune .venv
+
+# Exclude cache files
+global-exclude *.pt
+global-exclude *.pth
+global-exclude *.ckpt
+global-exclude *.cache
+global-exclude .pytest_cache
+global-exclude .mypy_cache
+global-exclude .coverage
