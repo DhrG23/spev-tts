@@ -1,17 +1,12 @@
 # SPEV TTS - Requirements
 # Auto-generated clean requirements for pip installation
 
-# Deep Learning Framework
-torch==2.9.1+cu126
-torchaudio>=2.0.0
-torchvision==0.24.1+cu126
 
 # Audio Processing
-audioread
 librosa
 soundfile
 soxr
-
+phonemizer
 # Scientific Computing
 numba
 numpy
@@ -38,3 +33,4 @@ packaging
 pillow
 requests
 tqdm
+
