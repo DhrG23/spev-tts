@@ -1,15 +1,16 @@
 """
-SPEV - PRODUCTION TRAINER (FIXED)
-=================================
+SPEV - CRITICAL FIX EDITION (Stable Long-Run Training)
+======================================================
 
-CHANGELOG:
-✅ FIXED ENERGY: Now calculates real RMS energy (was zero placeholder).
-✅ TEXTGRID SUPPORT: Uses MFA alignments if provided (CRITICAL for prosody).
-✅ FEATURE EXTRACTION: Robust extraction of Pitch, Energy, Breathiness, Roughness, Brightness.
-✅ AMP/GRAD ACCUM: Retained from production version for speed.
+CHANGELOG (CRITICAL FIXES):
+✅ DURATION SCALING: Forces sum(durs) == mel_len using proportional scaling. No more array mismatch.
+✅ VARIANCE CLAMPING: Hard clamps on Pitch/Energy/Rough/Bright/Breath predictions inside the model.
+✅ LOG SAFETY: Prevents log(0) in duration loss by clamping input durations to min=1.
+✅ TARGET SAFETY: Clamps dataset targets to preventing outliers from poisoning gradients.
+✅ VALIDATION: Now monitors auxiliary losses (variance predictors) in validation loop.
 
 Usage:
-  python .\spev_real_metrics.py --mode train --data_dir ./wavs --textgrid_dir ./textgrids --name run_fixed
+  python spev_critical_fix.py --mode train --data_dir ./wavs --textgrid_dir ./textgrids --name run_critical
 """
 
 import os
@@ -19,6 +20,7 @@ import json
 import random
 import shutil
 import time
+import math
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -52,7 +54,7 @@ try:
     import textgrid
     TEXTGRID_AVAILABLE = True
 except ImportError:
-    print("⚠️  'textgrid' library not found. Falling back to uniform alignment (NOT RECOMMENDED).")
+    print("⚠️  'textgrid' library not found. Falling back to uniform alignment.")
     TEXTGRID_AVAILABLE = False
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -67,7 +69,7 @@ CONFIG = {
 }
 
 # =========================================================
-# 1. MODEL ARCHITECTURE (Unchanged)
+# 1. MODEL ARCHITECTURE (With Hard Clamps)
 # =========================================================
 class FFTBlock(nn.Module):
     def __init__(self, hidden_dim, n_heads=2, dropout=0.1, kernel_size=9):
@@ -122,10 +124,16 @@ class LengthRegulator(nn.Module):
         for b in range(x.size(0)):
             expanded = []
             for t in range(x.size(1)):
-                n = max(0, int(durations[b, t].item()))
+                # 🛡️ SAFETY: Ensure duration is non-negative and finite
+                d_val = durations[b, t].item()
+                if not np.isfinite(d_val) or d_val < 0: d_val = 0
+                n = int(d_val)
+                
                 if n > 0:
                     expanded.append(x[b, t:t+1].repeat(n, 1))
+            
             if not expanded:
+                # 🛡️ SAFETY: Handle empty expansion
                 output.append(torch.zeros(1, x.size(2), device=x.device))
             else:
                 output.append(torch.cat(expanded, dim=0))
@@ -178,6 +186,14 @@ class RealMetricsFastSpeech2(nn.Module):
         breath_pred = self.breath_predictor(x)
         rough_pred = self.rough_predictor(x)
         bright_pred = self.bright_predictor(x)
+
+        # 🛡️ CRITICAL FIX: Clamp predictions to safe ranges BEFORE usage
+        log_dur_pred = torch.clamp(log_dur_pred, -5.0, 5.0) 
+        pitch_pred   = torch.clamp(pitch_pred, -3.0, 3.0)
+        energy_pred  = torch.clamp(energy_pred, -3.0, 3.0)
+        bright_pred  = torch.clamp(bright_pred, -3.0, 3.0)
+        breath_pred  = torch.clamp(breath_pred, 0.0, 1.0)
+        rough_pred   = torch.clamp(rough_pred, 0.0, 2.0)
         
         # Select
         if target_durations is not None:
@@ -235,13 +251,14 @@ class RealMetricsFastSpeech2(nn.Module):
         }
 
 # =========================================================
-# 2. DATASET (Fixed Energy & TextGrid Logic)
+# 2. DATASET (Duration Scaling & Safety)
 # =========================================================
 class RealMetricsDataset(Dataset):
-    def __init__(self, data_dir, textgrid_dir=None, cache_dir='cache_fixed', force_rebuild=False):
+    def __init__(self, data_dir, textgrid_dir=None, cache_dir='cache_critical', force_rebuild=True):
         self.cache_dir = cache_dir
         self.metadata = []
         
+        # Force rebuild by default to ensure fixes apply
         if force_rebuild and os.path.exists(cache_dir):
             shutil.rmtree(cache_dir)
         os.makedirs(cache_dir, exist_ok=True)
@@ -255,42 +272,34 @@ class RealMetricsDataset(Dataset):
                 self.vocab = data['vocab']
             return
 
-        print("🔄 Building Dataset Cache...")
-        print(f"   Audio: {data_dir}")
-        print(f"   Alignments: {textgrid_dir if textgrid_dir else 'Uniform Fallback (⚠️)'}")
-
+        print("🛡️ Building Critical Dataset Cache (Scaling Durations)...")
         wav_files = sorted(glob.glob(os.path.join(os.path.abspath(data_dir), "**", "*.wav"), recursive=True))
         
         # --- Stats Pass ---
-        print("   Step 1: Calculating Stats (Pitch, Energy, Centroid)...")
+        print("   Step 1: Calculating Stats...")
         all_p, all_e, all_c = [], [], []
         
         for w in random.sample(wav_files, min(len(wav_files), 500)):
             try:
                 y, _ = librosa.load(w, sr=CONFIG['sr'])
-                if len(y) < 2000: continue
+                if len(y) < 4000: continue
                 
-                # Pitch
                 f0, _, _ = librosa.pyin(y, fmin=60, fmax=500, sr=CONFIG['sr'])
                 f0 = np.log(np.nan_to_num(f0, nan=1e-8) + 1e-8)
                 all_p.extend(f0[f0 > -5].tolist())
                 
-                # Energy (Real calculation now!)
-                rms = librosa.feature.rms(y=y, hop_length=256)[0]
-                rms = np.log(rms + 1e-6)
+                rms = np.log(librosa.feature.rms(y=y, hop_length=256)[0] + 1e-6)
                 all_e.extend(rms.tolist())
                 
-                # Brightness
                 cent = np.log(librosa.feature.spectral_centroid(y=y, sr=CONFIG['sr'])[0] + 1e-8)
                 all_c.extend(cent.tolist())
             except: continue
         
         self.stats = {
             'p_mean': float(np.mean(all_p)), 'p_std': float(np.std(all_p)) + 1e-5,
-            'e_mean': float(np.mean(all_e)), 'e_std': float(np.std(all_e)) + 1e-5, # REAL Energy stats
+            'e_mean': float(np.mean(all_e)), 'e_std': float(np.std(all_e)) + 1e-5,
             'c_mean': float(np.mean(all_c)), 'c_std': float(np.std(all_c)) + 1e-5
         }
-        print(f"   Stats: Energy Mean={self.stats['e_mean']:.2f}, Std={self.stats['e_std']:.2f}")
 
         # --- Processing Pass ---
         print("   Step 2: Processing Files...")
@@ -298,15 +307,12 @@ class RealMetricsDataset(Dataset):
         
         for i, wav_path in enumerate(tqdm(wav_files)):
             try:
-                # 1. Load Audio
                 y, _ = librosa.load(wav_path, sr=CONFIG['sr'])
                 if len(y) < 4000: continue
                 basename = os.path.splitext(os.path.basename(wav_path))[0]
 
-                # 2. Get Alignment (TextGrid > Fallback)
+                # Get Alignment
                 phs, durs = [], []
-                
-                # Try TextGrid first
                 if textgrid_dir and TEXTGRID_AVAILABLE:
                     tg_candidates = glob.glob(os.path.join(textgrid_dir, "**", f"{basename}.TextGrid"), recursive=True)
                     if tg_candidates:
@@ -320,74 +326,85 @@ class RealMetricsDataset(Dataset):
                                         mark = interval.mark if interval.mark else '<SIL>'
                                         phs.append(mark)
                                         durs.append(frames)
-                        except: pass # Fallback if TG corrupt
+                        except: pass
 
-                # Fallback if no TextGrid or TG failed
                 if not phs:
                     txt_path = wav_path.replace('.wav', '.txt')
                     if os.path.exists(txt_path):
                         with open(txt_path) as f: text = f.read().strip()
                         phs = ['<SIL>'] + list(phonemize(text, language="en-us", backend="espeak", strip=True)) + ['<SIL>']
-                        durs = [int((len(y)/256) / len(phs))] * len(phs) # Uniform fallback
+                        durs = [int((len(y)/256) / len(phs))] * len(phs)
                 
-                if not phs: continue # Skip if totally failed
+                if not phs: continue
                 vocab_set.update(phs)
 
-                # 3. Extract Features
+                # Extract Features
                 mel = librosa.feature.melspectrogram(y=y, sr=CONFIG['sr'], n_fft=1024, hop_length=256, n_mels=80)
                 mel = torch.log(torch.clamp(torch.from_numpy(mel), min=1e-5))
-                
                 f0, _, voiced_prob = librosa.pyin(y, fmin=60, fmax=500, sr=CONFIG['sr'], hop_length=256)
-                
-                # REAL ENERGY
-                rms = librosa.feature.rms(y=y, hop_length=256)[0]
-                rms_log = np.log(rms + 1e-6)
-                
+                rms = np.log(librosa.feature.rms(y=y, hop_length=256)[0] + 1e-6)
                 cent = librosa.feature.spectral_centroid(y=y, sr=CONFIG['sr'], hop_length=256)[0]
                 
-                # Fix lengths
-                min_l = min(mel.shape[1], len(f0), len(rms_log))
+                # 🛡️ FIX 1: DURATION SCALING
+                min_l = min(mel.shape[1], len(f0), len(rms))
                 mel = mel[:, :min_l]
                 
-                # 4. Phoneme Averaging
+                total_dur = sum(durs)
+                if total_dur <= 0: continue # Skip broken files
+
+                # Scale durs to match mel length exactly
+                scale = min_l / total_dur
+                new_durs = [max(1, int(d * scale)) for d in durs]
+
+                # Fix rounding errors (Force strict match)
+                current_sum = sum(new_durs)
+                if current_sum < min_l:
+                    new_durs[-1] += (min_l - current_sum)
+                elif current_sum > min_l:
+                    diff = current_sum - min_l
+                    while diff > 0 and new_durs:
+                        if new_durs[-1] > diff:
+                            new_durs[-1] -= diff
+                            diff = 0
+                        else:
+                            diff -= new_durs[-1]
+                            new_durs.pop()
+                            phs.pop()
+                            if not new_durs: break
+                
+                if not new_durs or sum(new_durs) != min_l: continue
+                durs = new_durs
+
+                # Phoneme Averaging
                 p, e, br, ro, bri = [], [], [], [], []
                 curr = 0
                 f0_log = np.log(np.nan_to_num(f0, nan=1e-8) + 1e-8)
                 cent_log = np.log(cent + 1e-8)
                 
                 for d in durs:
-                    sl = slice(curr, min(curr+d, min_l))
-                    if sl.start >= sl.stop: 
-                        p.append(0); e.append(0); br.append(0); ro.append(0); bri.append(0)
-                        continue
-                        
-                    # Pitch
+                    sl = slice(curr, curr+d)
+                    
                     seg_p = f0_log[sl]
-                    p.append((np.mean(seg_p[seg_p > -5]) - self.stats['p_mean']) / self.stats['p_std'] if np.any(seg_p > -5) else 0)
+                    p_val = (np.mean(seg_p[seg_p > -5]) - self.stats['p_mean']) / self.stats['p_std'] if np.any(seg_p > -5) else 0
                     
-                    # Energy
-                    e.append((np.mean(rms_log[sl]) - self.stats['e_mean']) / self.stats['e_std'])
-                    
-                    # Breath
-                    br.append(1.0 - np.mean(voiced_prob[sl]))
-                    
-                    # Roughness
-                    ro.append(np.std(seg_p[seg_p > -5]) if np.any(seg_p > -5) else 0)
-                    
-                    # Brightness
-                    bri.append((np.mean(cent_log[sl]) - self.stats['c_mean']) / self.stats['c_std'])
+                    # 🛡️ Clamp targets for safety
+                    p.append(np.clip(p_val, -3.0, 3.0))
+                    e.append(np.clip((np.mean(rms[sl]) - self.stats['e_mean']) / self.stats['e_std'], -3.0, 3.0))
+                    br.append(np.clip(1.0 - np.mean(voiced_prob[sl]), 0.0, 1.0))
+                    ro.append(np.clip(np.std(seg_p[seg_p > -5]) if np.any(seg_p > -5) else 0, 0.0, 2.0))
+                    bri.append(np.clip((np.mean(cent_log[sl]) - self.stats['c_mean']) / self.stats['c_std'], -3.0, 3.0))
                     
                     curr += d
 
                 save_path = os.path.join(cache_dir, f"u_{i:05d}.pt")
                 torch.save({
                     'phs': phs, 'durs': durs, 'mel': mel.T.clone(),
-                    'pitch': np.array(p), 'energy': np.array(e), # Saved real energy
+                    'pitch': np.array(p), 'energy': np.array(e),
                     'breath': np.array(br), 'rough': np.array(ro), 'bright': np.array(bri)
                 }, save_path)
                 self.metadata.append(save_path)
                 
-            except Exception as e: continue
+            except Exception: continue
 
         self.vocab = sorted(list(vocab_set))
         with open(meta_path, 'w') as f:
@@ -397,16 +414,20 @@ class RealMetricsDataset(Dataset):
     def __getitem__(self, idx):
         u = torch.load(self.metadata[idx], weights_only=False)
         ph_to_idx = {p: i for i, p in enumerate(self.vocab)}
+        
+        # 🛡️ FIX 2: LOG SAFETY
+        durs_float = torch.clamp(torch.LongTensor(u['durs']).float(), min=1)
+        
         return {
             'ids': torch.LongTensor([ph_to_idx.get(p, 0) for p in u['phs']]),
             'durs': torch.LongTensor(u['durs']),
             'mel': u['mel'],
             'pitch': torch.FloatTensor(u['pitch']),
-            'energy': torch.FloatTensor(u['energy']), # Loads real energy
+            'energy': torch.FloatTensor(u['energy']),
             'breath': torch.FloatTensor(u['breath']),
             'rough': torch.FloatTensor(u['rough']),
             'bright': torch.FloatTensor(u['bright']),
-            'log_durs': torch.log(torch.LongTensor(u['durs']).float() + 1),
+            'log_durs': torch.log(durs_float + 1), # Safe Log
         }
 
 def collate_fn(batch):
@@ -423,8 +444,7 @@ def collate_fn(batch):
     return {
         'ids': ids, 'lens': lens, 'durs': durs, 'mel': mels,
         'log_durs': pad_feat('log_durs'), 'pitch': pad_feat('pitch'),
-        'energy': pad_feat('energy'), # Padded real energy
-        'breath': pad_feat('breath'),
+        'energy': pad_feat('energy'), 'breath': pad_feat('breath'),
         'rough': pad_feat('rough'), 'bright': pad_feat('bright')
     }
 
@@ -449,7 +469,6 @@ class Trainer:
         os.makedirs(self.log_dir, exist_ok=True)
         os.makedirs(self.ckpt_dir, exist_ok=True)
         
-        # Pass TextGrid dir
         full_dataset = RealMetricsDataset(args.data_dir, args.textgrid_dir)
         self.vocab = full_dataset.vocab
         self.stats = full_dataset.stats
@@ -464,7 +483,7 @@ class Trainer:
         self.optimizer = optim.AdamW(self.model.parameters(), lr=args.lr, betas=(0.9, 0.98), eps=1e-9)
         self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor=0.5, patience=5)
         self.scaler = GradScaler()
-        self.vocoder = None # Lazy load only if needed
+        self.vocoder = None
 
         if args.resume:
             print(f"♻️ Resuming from {args.resume}...")
@@ -496,6 +515,9 @@ class Trainer:
                 for k, v in b.items():
                     if isinstance(v, torch.Tensor): b[k] = v.to(DEVICE)
                 
+                if (i % self.args.grad_accum) == 0:
+                    self.optimizer.zero_grad()
+
                 with autocast():
                     out = self.model(b['ids'], b['lens'], 
                                    target_durations=b['durs'], target_pitch=b['pitch'], target_energy=b['energy'],
@@ -507,13 +529,18 @@ class Trainer:
                     l_mel = F.l1_loss(out['mel_pred'][:, :mel_len], b['mel'][:, :mel_len])
                     l_dur = F.mse_loss(out['log_duration_pred'][mask], b['log_durs'][mask])
                     l_pitch = F.mse_loss(out['pitch_pred'][mask], b['pitch'][mask])
-                    l_energy = F.mse_loss(out['energy_pred'][mask], b['energy'][mask]) # Real Energy Loss
+                    l_energy = F.mse_loss(out['energy_pred'][mask], b['energy'][mask])
                     l_aux = F.mse_loss(out['breath_pred'][mask], b['breath'][mask]) + \
                             F.mse_loss(out['rough_pred'][mask], b['rough'][mask]) + \
                             F.mse_loss(out['bright_pred'][mask], b['bright'][mask])
                     
                     loss = l_mel + l_dur + l_pitch + l_energy + l_aux
                     loss = loss / self.args.grad_accum
+
+                if torch.isnan(loss) or torch.isinf(loss):
+                    print(f"\n⚠️  WARNING: NaN detected at step {i}. Skipping batch.")
+                    self.optimizer.zero_grad()
+                    continue
 
                 self.scaler.scale(loss).backward()
                 
@@ -522,26 +549,24 @@ class Trainer:
                     torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
                     self.scaler.step(self.optimizer)
                     self.scaler.update()
-                    self.optimizer.zero_grad()
                 
                 total_loss += loss.item() * self.args.grad_accum
                 steps += 1
                 pbar.set_postfix({'Loss': f"{loss.item() * self.args.grad_accum:.2f}"})
 
-            # Valid
             val_loss = self.validate(val_loader, epoch)
             self.scheduler.step(val_loss)
             
-            # Checkpoint
             state = {'model': self.model.state_dict(), 'optimizer': self.optimizer.state_dict(), 'scaler': self.scaler.state_dict(), 'vocab': self.vocab, 'stats': self.stats}
             torch.save(state, os.path.join(self.ckpt_dir, "last.pt"))
-            if val_loss < best_loss:
+            if val_loss < best_loss and not math.isnan(val_loss):
                 best_loss = val_loss
                 torch.save(state, os.path.join(self.ckpt_dir, "best.pt"))
 
     def validate(self, loader, epoch):
         self.model.eval()
         total = 0
+        aux_total = 0
         with torch.no_grad():
             for i, b in enumerate(loader):
                 if b is None: continue
@@ -552,13 +577,26 @@ class Trainer:
                                target_durations=b['durs'], target_pitch=b['pitch'], target_energy=b['energy'],
                                target_breath=b['breath'], target_rough=b['rough'], target_bright=b['bright'])
                 
+                mask = ~out['src_mask']
                 mel_len = min(out['mel_pred'].size(1), b['mel'].size(1))
                 loss = F.l1_loss(out['mel_pred'][:, :mel_len], b['mel'][:, :mel_len])
-                total += loss.item()
+                
+                # Check Aux Loss
+                aux = F.mse_loss(out['pitch_pred'][mask], b['pitch'][mask]) + \
+                      F.mse_loss(out['energy_pred'][mask], b['energy'][mask])
+                
+                if not torch.isnan(loss):
+                    total += loss.item()
+                    aux_total += aux.item()
                 
                 if i == 0:
                     save_plot(b['mel'][0, :mel_len].cpu().numpy().T, out['mel_pred'][0, :mel_len].cpu().numpy().T, os.path.join(self.log_dir, f"val_{epoch}.png"))
-        return total / len(loader)
+        
+        avg_loss = total / max(len(loader), 1)
+        avg_aux = aux_total / max(len(loader), 1)
+        print(f"   Val Mel Loss: {avg_loss:.4f} | Aux Loss: {avg_aux:.4f}")
+        return avg_loss
+
 # =========================================================
 # 5. VOCODER & INFERENCE
 # =========================================================
@@ -580,16 +618,7 @@ class Vocoder:
         if self.model is None: return np.zeros(100)
         with torch.no_grad(): return self.model(torch.FloatTensor(mel).to(DEVICE)).squeeze().cpu().numpy()
 
-def infer_tts(
-    checkpoint_path,
-    text,
-    breathiness=0.1,
-    roughness=0.05,
-    brightness=0.0,
-    pitch_scale=1.0,
-    duration_scale=1.0,
-    hifigan_dir="./hifi-gan"
-):
+def infer_tts(checkpoint_path, text, breathiness=0.1, roughness=0.05, brightness=0.0, pitch_scale=1.0, duration_scale=1.0, hifigan_dir="./hifi-gan"):
     ckpt = torch.load(checkpoint_path, map_location=DEVICE)
     vocab = ckpt['vocab']
     ph_to_idx = {p: i for i, p in enumerate(vocab)}
@@ -600,7 +629,6 @@ def infer_tts(
 
     vocoder = Vocoder(hifigan_dir)
 
-    # Phonemize
     from phonemizer import phonemize
     phs = ['<SIL>'] + list(phonemize(text, language="en-us", backend="espeak", strip=True)) + ['<SIL>']
     ids = torch.LongTensor([ph_to_idx.get(p, 0) for p in phs]).unsqueeze(0).to(DEVICE)
@@ -629,7 +657,7 @@ if __name__ == "__main__":
     parser.add_argument('--mode', type=str, required=True, choices=['train', 'infer'])
     parser.add_argument('--data_dir', type=str, default='data')
     parser.add_argument('--textgrid_dir', type=str, help="Path to MFA .TextGrid files")
-    parser.add_argument('--name', type=str, default='run_fixed')
+    parser.add_argument('--name', type=str, default='run_critical')
     parser.add_argument('--resume', type=str)
     parser.add_argument('--epochs', type=int, default=100)
     parser.add_argument('--batch_size', type=int, default=16)
@@ -638,20 +666,11 @@ if __name__ == "__main__":
     parser.add_argument('--hifigan_dir', type=str, default='vocoder_checkpoints/LJ_FT_T2_V3')
     parser.add_argument('--text', type=str, default='You are using the SPEV text-to-speech synthesis system.')
     parser.add_argument('--output', type=str, default='output.wav')
-    parser.add_argument('--checkpoint', type=str, default='checkpoints/run_fixed/best.pt')
+    parser.add_argument('--checkpoint', type=str, default='checkpoints/run_critical/best.pt')
 
-    
     args = parser.parse_args()
     if args.mode == 'train':
         Trainer(args).train()
     else:
-        wav = infer_tts(args.checkpoint,
-                args.text,
-                breathiness=0.1,
-                roughness=0.05,
-                brightness=0.0,
-                pitch_scale=1.0,
-                duration_scale=1.0,
-                hifigan_dir="./hifi-gan"
-            )
+        wav = infer_tts(args.checkpoint, args.text, hifigan_dir=args.hifigan_dir)
         sf.write(args.output, wav, CONFIG['sr'])
