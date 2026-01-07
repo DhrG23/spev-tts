@@ -14,3 +14,5 @@ spev_advanced.py.back
 spev_dataset/
 DOWNLOADS/
 spev_real_metrics.py.back
+cache_fixed/
+logs/
