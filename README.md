@@ -8,12 +8,6 @@
 text-to-speech system with controllable voice quality, emotion, and
 non-verbal sound (sighs, breaths) layered on top.
 
-> **Note on this README**: this file was rewritten to match the code that
-> actually ships in this project. An earlier version described `spev_tts.py`
-> and `spev_advanced.py`, which no longer exist — the project evolved into
-> the three-file architecture described below. The old README is kept as
-> `README.md.old` for reference.
-
 ## 🏗️ Architecture
 
 The project is organized in layers, each script building on the one below it:
