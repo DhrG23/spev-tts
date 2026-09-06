@@ -1,15 +1,23 @@
 # SPEV TTS - Requirements
-# Auto-generated clean requirements for pip installation
+# Covers spev_real_metrics.py (trainer/engine), spev_embodied_core.py and
+# spev_temporal_policy.py (coordinator layers).
 
+# Deep Learning Framework
+torch>=2.0.0
+torchaudio>=2.0.0
 
 # Audio Processing
-librosa
+librosa>=0.10.0
 soundfile
 soxr
 phonemizer
+# phonemizer requires the espeak-ng system package:
+#   Ubuntu/Debian: sudo apt-get install espeak-ng
+#   macOS:         brew install espeak-ng
+
 # Scientific Computing
 numba
-numpy
+numpy<2.0.0
 scipy
 
 # Data Processing

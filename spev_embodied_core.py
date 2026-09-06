@@ -13,7 +13,7 @@ Architecture:
 5. Mixer             -> Blends them into a single biological stream
 
 Usage:
-  python spev_embodied_core.py --text "I am so tired... [sigh] but I must go on." --emotion exhausted --checkpoint checkpoints/best_model.pt
+  python spev_embodied_core.py --text "I am so tired... [sigh] but I must go on." --emotion exhausted --checkpoint checkpoints/run_stable/best.pt
 """
 
 import os
@@ -257,7 +257,7 @@ class EmbodiedAgent:
 # =========================================================
 # MAIN
 # =========================================================
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--text', type=str, required=True, help="Text with events, e.g. 'Hi [sigh] bye'")
     parser.add_argument('--emotion', type=str, default='neutral', choices=['neutral', 'exhausted', 'excited', 'secretive', 'angry'])
@@ -272,3 +272,7 @@ if __name__ == "__main__":
     
     sf.write(args.output, audio, CONFIG['sr'])
     print(f"\n💾 Output saved to {args.output}")
+
+
+if __name__ == "__main__":
+    main()

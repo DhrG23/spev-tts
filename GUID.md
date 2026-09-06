@@ -103,7 +103,8 @@ pip install -r requirements.txt
 
 Or install manually:
 ```bash
-pip install librosa soundfile numpy scipy textgrid cmudict pandas requests tqdm
+pip install librosa soundfile numpy scipy textgrid phonemizer pandas requests tqdm
+# phonemizer also needs the espeak-ng system package (apt/brew install espeak-ng)
 ```
 
 ### 4. Install SPEV Package
@@ -126,8 +127,9 @@ python -c "import soundfile; print(f'SoundFile: {soundfile.__version__}')"
 python -c "import torch; print(f'CUDA Available: {torch.cuda.is_available()}')"
 
 # Check command-line tools (if installed with setup.py)
-spev-train --help
-spev-infer --help
+spev-run --help
+spev-embodied-infer --help
+spev-temporal-infer --help
 ```
 
 Or use the system check script:
@@ -295,15 +297,16 @@ After installation:
    ```bash
    ./train_model.sh
    # or manually:
-   python spev_tts.py --mode train --data_dir data/training_data_ljspeech \
-       --textgrid_dir data/textgrid_data --hifigan_dir vocoder_checkpoints/LJ_FT_T2_V3
+   python spev_real_metrics.py --mode train --data_dir data/training_data_ljspeech \
+       --textgrid_dir data/textgrid_data --hifigan_dir vocoder_checkpoints/LJ_FT_T2_V3 \
+       --name run_stable
    ```
 
 4. **Test Synthesis**
    ```bash
    ./test_inference.sh
    # or manually:
-   python spev_tts.py --mode infer --checkpoint checkpoints/best_model.pt \
+   python spev_real_metrics.py --mode infer --checkpoint checkpoints/run_stable/best.pt \
        --text "Hello world!"
    ```
 

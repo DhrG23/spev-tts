@@ -109,7 +109,7 @@ def process_single_speaker():
         if (i + 1) % 500 == 0:
             print(f"Processed {i+1}/{len(df)} files...")
 
-if __name__ == "__main__":
+def main():
     import argparse
     parser = argparse.ArgumentParser(description="TTS Dataset Downloader and Preprocessor")
     parser.add_argument("--dataset", choices=["multi-speaker", "single-speaker", "both"], 
@@ -126,3 +126,7 @@ if __name__ == "__main__":
         print('='*60 + '\n' + ' '*8 +'Processing Single-Speaker Dataset (LJSpeech)' + '\n' + '='*60)
         download_and_extract(SS_DATASET_URL, SS_RAW_DIR, "ljspeech.tar.bz2")
         process_single_speaker()
+
+
+if __name__ == "__main__":
+    main()

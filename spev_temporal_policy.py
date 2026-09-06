@@ -16,7 +16,7 @@ It introduces two critical features:
      Phonemes -> Acoustic Curves directly.
 
 Usage:
-  python spev_temporal_policy.py --text "Oh my god, I am so relieved." --emotion relief --checkpoint checkpoints/best_model.pt
+  python spev_temporal_policy.py --text "Oh my god, I am so relieved." --emotion relief --checkpoint checkpoints/run_stable/best.pt
 """
 
 import os
@@ -251,7 +251,7 @@ class EmbodiedAgent:
                     
         return np.concatenate(audio_segments) if audio_segments else np.zeros(100)
 
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--text', type=str, required=True)
     parser.add_argument('--emotion', type=str, default='neutral', 
@@ -266,4 +266,8 @@ if __name__ == "__main__":
     audio = agent.synthesize(args.text, args.emotion)
     
     sf.write(args.output, audio, CONFIG['sr'])
+
+
+if __name__ == "__main__":
+    main()
     print(f"\n💾 Output saved to {args.output}")

@@ -786,7 +786,7 @@ def infer_tts(checkpoint_path, text, breathiness=0.1, roughness=0.05, brightness
 
     return wav, mel.cpu().numpy()
 
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--mode', type=str, required=True, choices=['train', 'infer'])
     parser.add_argument('--data_dir', type=str, default='data')
@@ -838,3 +838,7 @@ if __name__ == "__main__":
         mel_plot_path = args.output.replace('.wav', '_mel.png')
         plt.savefig(mel_plot_path)
         print(f"✅ Mel spectrogram saved to {mel_plot_path}")
+
+
+if __name__ == "__main__":
+    main()

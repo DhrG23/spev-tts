@@ -10,10 +10,10 @@ This script converts ESD/Jenny into the format `spev_real_metrics.py` needs.
 
 Usage:
   # For ESD (Emotional Speech Dataset)
-  python spev_data_prep.py --dataset esd --in_dir ./ESD_English --out_dir ./training_data
+  python advanced__download_dataset.py --dataset esd --in_dir ./ESD_English --out_dir ./training_data
 
   # For Jenny
-  python spev_data_prep.py --dataset jenny --in_dir ./Jenny --out_dir ./training_data
+  python advanced__download_dataset.py --dataset jenny --in_dir ./Jenny --out_dir ./training_data
 """
 
 import os
@@ -124,7 +124,7 @@ def prep_jenny(in_dir, out_dir):
                 with open(dst_audio.replace(ext, '.txt'), 'w', encoding='utf-8') as tf:
                     tf.write(text)
 
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset', choices=['esd', 'jenny'], required=True)
     parser.add_argument('--in_dir', required=True, help="Path to the downloaded raw dataset")
@@ -138,3 +138,7 @@ if __name__ == "__main__":
         
     print(f"\n✅ Done! Data is ready in {args.out_dir}")
     print(f"   Now run: python spev_real_metrics.py --mode train --data_dir {args.out_dir}")
+
+
+if __name__ == "__main__":
+    main()

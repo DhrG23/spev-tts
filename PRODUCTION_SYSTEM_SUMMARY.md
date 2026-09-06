@@ -50,7 +50,10 @@ Text Input → Phoneme Conversion → Acoustic Model → Mel-Spectrogram → Voc
 - **Output**: 22.05 kHz waveform
 - **Fallback**: Griffin-Lim algorithm if HiFi-GAN unavailable
 
-### Advanced Features (spev_advanced.py)
+### Advanced Features (spev_embodied_core.py / spev_temporal_policy.py)
+_(Note: these controls originally shipped as `spev_advanced.py`, which has
+since been split into the two coordinator scripts above; the effects
+described below are unchanged.)_
 
 #### Voice Quality Control
 1. **Breathiness** (0.0-1.0)
@@ -200,14 +203,16 @@ Would require:
 
 ```
 spev-tts/
-├── spev_tts.py                    # Core FastSpeech2 implementation
-├── spev_advanced.py               # Extended with voice controls
-├── download_datasets.py           # Dataset downloader
+├── spev_real_metrics.py           # Core FastSpeech2 implementation + trainer
+├── spev_embodied_core.py          # Coordinator: non-verbal events (sighs, breaths)
+├── spev_temporal_policy.py        # Coordinator: time-varying emotion curves
+├── download_datasets.py           # LJSpeech / LibriTTS-R downloader
+├── advanced__download_dataset.py  # ESD / Jenny (expressive data) prepper
 ├── proper_cache_strict.pt         # Preprocessed training data (generated)
-├── checkpoints/                   # Model checkpoints
-│   ├── ckpt_10.pt
-│   ├── ckpt_20.pt
-│   └── best_model.pt
+├── checkpoints/                   # Model checkpoints, per run --name
+│   └── run_stable/
+│       ├── last.pt
+│       └── best.pt
 ├── data/
 │   ├── training_data_ljspeech/   # Processed audio + transcripts
 │   └── textgrid_data/            # MFA alignment files

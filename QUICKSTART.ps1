@@ -85,7 +85,7 @@ Print-Success "PyTorch installed"
 
 # Install dependencies
 Print-Info "Installing Python dependencies..."
-pip install librosa soundfile numpy textgrid cmudict pandas requests | Out-Null
+pip install librosa soundfile numpy scipy textgrid phonemizer pandas requests tqdm | Out-Null
 Print-Success "Dependencies installed"
 
 # Create directory structure
@@ -187,18 +187,19 @@ REM Simple test inference script
 
 echo Running test inference...
 
-if not exist "checkpoints\best_model.pt" (
-    echo Error: No checkpoint found at checkpoints\best_model.pt
+if not exist "checkpoints\run_stable\best.pt" (
+    echo Error: No checkpoint found at checkpoints\run_stable\best.pt
     echo Please train the model first or specify a different checkpoint.
     exit /b 1
 )
 
-python spev_tts.py ^
+python spev_real_metrics.py ^
     --mode infer ^
-    --checkpoint checkpoints\best_model.pt ^
+    --checkpoint checkpoints\run_stable\best.pt ^
     --text "Hello world! This is a test of the SPEV text to speech system." ^
     --duration_scale 1.0 ^
-    --pitch_scale 1.0
+    --pitch_scale 1.0 ^
+    --output output.wav
 
 echo Test complete! Check output.wav
 pause
@@ -207,35 +208,42 @@ pause
 Set-Content -Path "test_inference.bat" -Value $testInferenceBat
 Print-Success "Test inference script created (test_inference.bat)"
 
-# Create advanced inference batch script
+# Create advanced (coordinator layer) inference batch script
+# NOTE: --nasality/--valence/--arousal/--dominance/--age/--lung_capacity/
+# --word_emphasis belonged to the old spev_advanced.py, which no longer
+# exists. The current coordinator layer takes --emotion + inline [event]
+# tags instead - see spev_embodied_core.py / spev_temporal_policy.py.
 Print-Info "Creating advanced inference example script..."
 $testAdvancedBat = @"
 @echo off
-REM Advanced inference with voice controls
+REM Advanced inference: non-verbal events + time-varying emotion curves
 
-echo Running advanced inference with voice controls...
+echo Running advanced inference (coordinator layer)...
 
-if not exist "checkpoints\best_model.pt" (
-    echo Error: No checkpoint found at checkpoints\best_model.pt
+if not exist "checkpoints\run_stable\best.pt" (
+    echo Error: No checkpoint found at checkpoints\run_stable\best.pt
     exit /b 1
 )
 
-python spev_advanced.py ^
-    --mode infer ^
-    --checkpoint checkpoints\best_model.pt ^
-    --text "Hello! This is an amazing demonstration." ^
-    --breathiness 0.3 ^
-    --roughness 0.1 ^
-    --nasality 0.2 ^
-    --valence 0.8 ^
-    --arousal 0.6 ^
-    --dominance 0.5 ^
-    --age 35 ^
-    --lung_capacity 0.8 ^
-    --word_emphasis "1.0,1.5,1.0,2.0,1.0" ^
-    --output output_advanced.wav
+echo.
+echo 1. spev_embodied_core.py - inline non-verbal events ([sigh], [breath])
+python spev_embodied_core.py ^
+    --text "I am so tired... [sigh] but I must go on." ^
+    --emotion exhausted ^
+    --checkpoint checkpoints\run_stable\best.pt ^
+    --hifigan_dir .\hifi-gan ^
+    --output output_embodied.wav
 
-echo Advanced test complete! Check output_advanced.wav
+echo.
+echo 2. spev_temporal_policy.py - time-varying emotion curves
+python spev_temporal_policy.py ^
+    --text "Oh my god, I am so relieved." ^
+    --emotion relief ^
+    --checkpoint checkpoints\run_stable\best.pt ^
+    --hifigan_dir .\hifi-gan ^
+    --output output_temporal.wav
+
+echo Advanced test complete! Check output_embodied.wav and output_temporal.wav
 pause
 "@
 
@@ -256,7 +264,7 @@ Write-Host ""
 if (Test-Path "proper_cache_strict.pt") {
     Write-Host "1. " -NoNewline
     Print-Success "MFA cache found - Ready to train!"
-    Write-Host "   Run: python spev_tts.py --mode train --data_dir data/training_data_ljspeech --textgrid_dir data/textgrid_data --hifigan_dir vocoder_checkpoints/LJ_FT_T2_V3 --epochs 100"
+    Write-Host "   Run: python spev_real_metrics.py --mode train --data_dir data/training_data_ljspeech --textgrid_dir data/textgrid_data --hifigan_dir vocoder_checkpoints/LJ_FT_T2_V3 --name run_stable --epochs 100"
 } else {
     Write-Host "1. " -NoNewline
     Print-Warning "Prepare training data:"
@@ -272,7 +280,7 @@ if (Test-Path "proper_cache_strict.pt") {
 
 Write-Host ""
 Write-Host "2. Train the model:"
-Write-Host "   python spev_tts.py --mode train --data_dir data/training_data_ljspeech --textgrid_dir data/textgrid_data --hifigan_dir vocoder_checkpoints/LJ_FT_T2_V3 --epochs 100"
+Write-Host "   python spev_real_metrics.py --mode train --data_dir data/training_data_ljspeech --textgrid_dir data/textgrid_data --hifigan_dir vocoder_checkpoints/LJ_FT_T2_V3 --name run_stable --epochs 100"
 Write-Host ""
 Write-Host "3. Test synthesis:"
 Write-Host "   .\test_inference.bat"

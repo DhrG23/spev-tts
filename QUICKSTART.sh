@@ -129,9 +129,18 @@ print_info "Installing required Python packages..."
 echo "This may take a few minutes..."
 
 # Install packages with progress
-pip install librosa soundfile numpy textgrid cmudict pandas requests
+pip install librosa soundfile numpy scipy textgrid phonemizer pandas requests tqdm
 
 print_success "All dependencies installed"
+
+# phonemizer needs the espeak-ng system binary, not just the pip package
+if ! command -v espeak-ng &> /dev/null; then
+    print_warning "espeak-ng not found (required by phonemizer for text->phoneme conversion)."
+    echo "  Ubuntu/Debian: sudo apt-get install espeak-ng"
+    echo "  macOS: brew install espeak-ng"
+else
+    print_success "espeak-ng found"
+fi
 
 # Create directory structure
 print_info "Creating directory structure..."
@@ -292,21 +301,24 @@ source venv/bin/activate
 
 echo "Running test inference..."
 
-if [ ! -f "checkpoints/best_model.pt" ]; then
-    echo "Error: No checkpoint found at checkpoints/best_model.pt"
-    echo "Please train the model first or specify a different checkpoint."
+CHECKPOINT="checkpoints/run_stable/best.pt"
+if [ ! -f "$CHECKPOINT" ]; then
+    echo "Error: No checkpoint found at $CHECKPOINT"
+    echo "Please train the model first (./train_model.sh), or edit CHECKPOINT"
+    echo "above to point at a different run's checkpoint."
     echo ""
     echo "Available checkpoints:"
-    ls -lh checkpoints/*.pt 2>/dev/null || echo "  No checkpoints found"
+    find checkpoints -name "*.pt" 2>/dev/null || echo "  No checkpoints found"
     exit 1
 fi
 
-python3 spev_tts.py \
+python3 spev_real_metrics.py \
     --mode infer \
-    --checkpoint checkpoints/best_model.pt \
+    --checkpoint "$CHECKPOINT" \
     --text "Hello world! This is a test of the SPEV text to speech system." \
     --duration_scale 1.0 \
-    --pitch_scale 1.0
+    --pitch_scale 1.0 \
+    --output output.wav
 
 echo ""
 echo "Test complete! Check output.wav"
@@ -315,39 +327,49 @@ EOF
 chmod +x test_inference.sh
 print_success "Test inference script created (test_inference.sh)"
 
-# Create advanced inference example
-print_info "Creating advanced inference example script..."
+# Create advanced (coordinator layer) inference example
+# NOTE: the old --nasality/--valence/--arousal/--dominance/--age/
+# --lung_capacity/--word_emphasis flags belonged to spev_advanced.py, which
+# no longer exists. The current "advanced" layer is the coordinator scripts
+# (spev_embodied_core.py / spev_temporal_policy.py), which take --emotion
+# and inline [event] tags instead of individual VAD/physiology knobs.
+print_info "Creating advanced (coordinator layer) inference example script..."
 cat > test_advanced.sh << 'EOF'
 #!/bin/bash
-# Advanced inference with voice controls
+# Advanced inference: non-verbal events + time-varying emotion curves,
+# layered on top of the base checkpoint via the coordinator scripts.
 
 source venv/bin/activate
 
-echo "Running advanced inference with voice controls..."
+echo "Running advanced inference (coordinator layer)..."
 
-if [ ! -f "checkpoints/best_model.pt" ]; then
-    echo "Error: No checkpoint found at checkpoints/best_model.pt"
-    echo "Please train the model first."
+CHECKPOINT="checkpoints/run_stable/best.pt"
+if [ ! -f "$CHECKPOINT" ]; then
+    echo "Error: No checkpoint found at $CHECKPOINT"
+    echo "Please train the model first (./train_model.sh)."
     exit 1
 fi
 
-python3 spev_advanced.py \
-    --mode infer \
-    --checkpoint checkpoints/best_model.pt \
-    --text "Hello! This is an amazing demonstration." \
-    --breathiness 0.3 \
-    --roughness 0.1 \
-    --nasality 0.2 \
-    --valence 0.8 \
-    --arousal 0.6 \
-    --dominance 0.5 \
-    --age 35 \
-    --lung_capacity 0.8 \
-    --word_emphasis "1.0,1.5,1.0,2.0,1.0" \
-    --output output_advanced.wav
+echo ""
+echo "1. spev_embodied_core.py - inline non-verbal events ([sigh], [breath])"
+python3 spev_embodied_core.py \
+    --text "I am so tired... [sigh] but I must go on." \
+    --emotion exhausted \
+    --checkpoint "$CHECKPOINT" \
+    --hifigan_dir ./hifi-gan \
+    --output output_embodied.wav
 
 echo ""
-echo "Advanced test complete! Check output_advanced.wav"
+echo "2. spev_temporal_policy.py - time-varying emotion curves"
+python3 spev_temporal_policy.py \
+    --text "Oh my god, I am so relieved." \
+    --emotion relief \
+    --checkpoint "$CHECKPOINT" \
+    --hifigan_dir ./hifi-gan \
+    --output output_temporal.wav
+
+echo ""
+echo "Advanced test complete! Check output_embodied.wav and output_temporal.wav"
 EOF
 
 chmod +x test_advanced.sh
@@ -365,47 +387,70 @@ echo "Starting SPEV TTS training..."
 echo "This will take 4-6 hours on GPU, 24-48 hours on CPU"
 echo ""
 
-python3 spev_tts.py \
+python3 spev_real_metrics.py \
     --mode train \
     --data_dir data/training_data_ljspeech \
     --textgrid_dir data/textgrid_data \
     --hifigan_dir vocoder_checkpoints/LJ_FT_T2_V3 \
-    --warmup_epochs 20 \
+    --name run_stable \
     --epochs 100
 
 echo ""
-echo "Training complete! Checkpoints saved to checkpoints/"
+echo "Training complete! Checkpoint saved to checkpoints/run_stable/best.pt"
 EOF
 
 chmod +x train_model.sh
 print_success "Training script created (train_model.sh)"
 
-# Create advanced training script
-print_info "Creating advanced training script..."
-cat > train_advanced.sh << 'EOF'
+# NOTE: there is no separate "advanced" training script anymore.
+# spev_embodied_core.py / spev_temporal_policy.py apply their voice-quality
+# and emotion effects at inference time on top of whatever checkpoint you
+# trained with spev_real_metrics.py - there's nothing extra to train for
+# them by default. What *does* require different training data is learned
+# (not heuristic) expressiveness: train spev_real_metrics.py itself on an
+# expressive corpus (ESD, Jenny) prepared with advanced__download_dataset.py
+# instead of - or blended with - plain LJSpeech. Plain LJSpeech alone will
+# not produce learned emotional variation no matter how long you train.
+print_info "Creating expressive-data training helper script..."
+cat > train_expressive.sh << 'EOF'
 #!/bin/bash
-# Advanced training script with voice controls
+# Train on expressive/emotional speech data (ESD or Jenny) instead of, or
+# blended with, plain LJSpeech - required if you want breathiness/roughness/
+# emotion to be *learned* rather than applied heuristically at inference.
+#
+# Usage:
+#   ./train_expressive.sh esd   /path/to/ESD_English
+#   ./train_expressive.sh jenny /path/to/Jenny
 
 source venv/bin/activate
 
-echo "Starting SPEV Advanced TTS training..."
-echo "This will take 5-8 hours on GPU, 30-60 hours on CPU"
-echo ""
+DATASET="$1"
+IN_DIR="$2"
+OUT_DIR="data/training_data_${DATASET}"
 
-python3 spev_advanced.py \
+if [ -z "$DATASET" ] || [ -z "$IN_DIR" ]; then
+    echo "Usage: ./train_expressive.sh <esd|jenny> <path_to_raw_dataset>"
+    exit 1
+fi
+
+python3 advanced__download_dataset.py \
+    --dataset "$DATASET" \
+    --in_dir "$IN_DIR" \
+    --out_dir "$OUT_DIR"
+
+python3 spev_real_metrics.py \
     --mode train \
-    --data_dir data/training_data_ljspeech \
-    --textgrid_dir data/textgrid_data \
+    --data_dir "$OUT_DIR" \
     --hifigan_dir vocoder_checkpoints/LJ_FT_T2_V3 \
-    --warmup_epochs 20 \
+    --name "run_${DATASET}" \
     --epochs 150
 
 echo ""
-echo "Training complete! Checkpoints saved to checkpoints/"
+echo "Training complete! Checkpoint saved to checkpoints/run_${DATASET}/best.pt"
 EOF
 
-chmod +x train_advanced.sh
-print_success "Advanced training script created (train_advanced.sh)"
+chmod +x train_expressive.sh
+print_success "Expressive-data training script created (train_expressive.sh)"
 
 # Create system check script
 print_info "Creating system check script..."
@@ -433,7 +478,15 @@ fi
 echo ""
 
 echo "Installed Packages:"
-pip list | grep -E "torch|librosa|soundfile|numpy|textgrid|cmudict"
+pip list | grep -E "torch|librosa|soundfile|numpy|textgrid|phonemizer"
+echo ""
+
+echo "espeak-ng (required by phonemizer):"
+if command -v espeak-ng &> /dev/null; then
+    espeak-ng --version
+else
+    echo "✗ Not found - install via apt/brew (see README.md Requirements)"
+fi
 echo ""
 
 echo "Directory Structure:"
@@ -484,10 +537,10 @@ echo ""
 
 echo "Model Checkpoints:"
 if [ -d "checkpoints" ]; then
-    COUNT=$(ls -1 checkpoints/*.pt 2>/dev/null | wc -l)
-    if [ $COUNT -gt 0 ]; then
+    COUNT=$(find checkpoints -name "*.pt" 2>/dev/null | wc -l)
+    if [ "$COUNT" -gt 0 ]; then
         echo "✓ Checkpoints found: $COUNT"
-        ls -lht checkpoints/*.pt | head -n 3
+        find checkpoints -name "*.pt" -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -n 3 | cut -d' ' -f2-
     else
         echo "○ No checkpoints yet (train model first)"
     fi
@@ -523,8 +576,8 @@ echo ""
 if [ -f "proper_cache_strict.pt" ]; then
     echo "1. ✓ MFA cache found - Ready to train!"
     echo ""
-    echo -e "   ${GREEN}./train_model.sh${NC}  (Standard FastSpeech 2)"
-    echo -e "   ${GREEN}./train_advanced.sh${NC}  (With voice controls)"
+    echo -e "   ${GREEN}./train_model.sh${NC}  (Standard FastSpeech 2 on LJSpeech)"
+    echo -e "   ${GREEN}./train_expressive.sh esd|jenny <path>${NC}  (Learned emotion/expressiveness)"
 else
     echo "1. ⚠ Prepare training data:"
     echo ""
@@ -552,7 +605,7 @@ fi
 echo ""
 echo "2. After training, test synthesis:"
 echo -e "   ${GREEN}./test_inference.sh${NC}  (Standard synthesis)"
-echo -e "   ${GREEN}./test_advanced.sh${NC}  (With voice controls)"
+echo -e "   ${GREEN}./test_advanced.sh${NC}  (Non-verbal events + emotion curves)"
 echo ""
 echo "3. Check system status anytime:"
 echo -e "   ${GREEN}./check_system.sh${NC}"

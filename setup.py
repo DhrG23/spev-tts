@@ -19,14 +19,16 @@ def read_requirements(filename='requirements.txt'):
     return []
 
 # Core requirements (if requirements.txt doesn't exist)
+# NOTE: the actual code (spev_real_metrics.py etc.) uses the `phonemizer`
+# library + espeak-ng for text->phoneme conversion, not cmudict.
 CORE_REQUIREMENTS = [
     'torch>=2.0.0',
     'torchaudio>=2.0.0',
     'librosa>=0.10.0',
     'soundfile>=0.12.0',
-    'numpy>=1.24.0',
+    'numpy>=1.24.0,<2.0.0',
     'textgrid>=1.5.0',
-    'cmudict>=1.0.0',
+    'phonemizer',
     'pandas>=2.0.0',
     'requests>=2.31.0',
 ]
@@ -73,7 +75,13 @@ setup(
     
     # Package configuration
     packages=find_packages(exclude=['tests', 'tests.*', 'docs', 'examples']),
-    py_modules=['spev_tts', 'spev_advanced', 'dataset_loader'],
+    py_modules=[
+        'spev_real_metrics',
+        'spev_embodied_core',
+        'spev_temporal_policy',
+        'download_datasets',
+        'advanced__download_dataset',
+    ],
     
     # Python version requirement
     python_requires='>=3.8',
@@ -82,14 +90,18 @@ setup(
     install_requires=read_requirements() if os.path.exists('requirements.txt') else CORE_REQUIREMENTS,
     extras_require=EXTRAS_REQUIRE,
     
-    # Entry points for command-line scripts
+    # Entry points for command-line scripts.
+    # spev_real_metrics.py handles both training and plain inference via its
+    # own --mode flag, so a single console script covers both; the two
+    # coordinator layers (embodied / temporal) are separate scripts since
+    # they're inference-only and take different arguments.
     entry_points={
         'console_scripts': [
-            'spev-train=spev_tts:main',
-            'spev-infer=spev_tts:inference_mode',
-            'spev-advanced-train=spev_advanced:main',
-            'spev-advanced-infer=spev_advanced:inference_mode',
+            'spev-run=spev_real_metrics:main',
+            'spev-embodied-infer=spev_embodied_core:main',
+            'spev-temporal-infer=spev_temporal_policy:main',
             'spev-download=download_datasets:main',
+            'spev-prep-dataset=advanced__download_dataset:main',
         ],
     },
     
