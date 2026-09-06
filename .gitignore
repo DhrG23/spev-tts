@@ -18,3 +18,8 @@ cache_fixed/
 logs/
 *.zip
 *.old
+output/
+venv/
+env/
+.venv/
+.env/

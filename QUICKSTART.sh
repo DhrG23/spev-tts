@@ -58,11 +58,12 @@ if ! command -v python3 &> /dev/null; then
     echo "Installation instructions:"
     echo "  Ubuntu/Debian: sudo apt-get install python3 python3-pip python3-venv"
     echo "  macOS: brew install python3"
+    echo "  Arch: yay -S python312"
     echo "  Fedora: sudo dnf install python3 python3-pip"
     exit 1
 fi
 
-PYTHON_VERSION=$(python3 --version | cut -d' ' -f2)
+PYTHON_VERSION=$(python3.12 --version | cut -d' ' -f2)
 PYTHON_MAJOR=$(echo $PYTHON_VERSION | cut -d'.' -f1)
 PYTHON_MINOR=$(echo $PYTHON_VERSION | cut -d'.' -f2)
 
@@ -87,7 +88,7 @@ fi
 # Create virtual environment
 print_info "Creating virtual environment..."
 if [ ! -d "venv" ]; then
-    python3 -m venv venv
+    python3.12 -m venv venv
     print_success "Virtual environment created"
 else
     print_warning "Virtual environment already exists, skipping..."
