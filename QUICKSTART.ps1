@@ -116,30 +116,72 @@ if (-not (Test-Path "hifi-gan")) {
     Print-Warning "HiFi-GAN repository already exists, skipping clone..."
 }
 
-# Download HiFi-GAN checkpoint
-Print-Info "Checking HiFi-GAN checkpoint..."
-if (-not (Test-Path "vocoder_checkpoints\LJ_FT_T2_V3")) {
-    Print-Warning "HiFi-GAN checkpoint not found."
-    Print-Info "Please download manually from:"
-    Write-Host "https://drive.google.com/drive/folders/1-eEYTB5Av9jNql0WGBlRoi-WH2J7bp5Y" -ForegroundColor Yellow
-    Write-Host ""
-    Print-Info "Steps:"
-    Write-Host "1. Download the file LJ_FT_T2_V3.tar.gz"
-    Write-Host "2. Extract it to vocoder_checkpoints\ directory"
-    Write-Host "3. The final path should be: vocoder_checkpoints\LJ_FT_T2_V3\"
-    Write-Host ""
-    
-    $response = Read-Host "Have you already downloaded and extracted it? (y/n)"
-    if ($response -eq "y" -or $response -eq "Y") {
-        if (Test-Path "vocoder_checkpoints\LJ_FT_T2_V3") {
-            Print-Success "HiFi-GAN checkpoint found!"
-        } else {
-            Print-Warning "Checkpoint not found at expected location. Please verify."
-        }
+# Download HiFi-GAN V3 checkpoint
+Print-Info "Checking HiFi-GAN V3 checkpoint..."
+$hifiGanDir = "vocoder_checkpoints\LJ_FT_T2_V3"
+$hifiGanCheckpoint = Join-Path $hifiGanDir "generator_v3"
+$hifiGanConfig = Join-Path $hifiGanDir "config.json"
+$hifiGanCheckpointUrl = "https://github.com/csukuangfj/models/raw/refs/heads/master/hifigan/generator_v3"
+$hifiGanConfigUrl = "https://raw.githubusercontent.com/jik876/hifi-gan/master/config_v3.json"
+
+if (-not (Test-Path $hifiGanCheckpoint)) {
+    New-Item -ItemType Directory -Path $hifiGanDir -Force | Out-Null
+
+    Print-Info "Downloading HiFi-GAN V3 generator from maintained GitHub mirror..."
+    try {
+        Invoke-WebRequest -Uri $hifiGanCheckpointUrl -OutFile $hifiGanCheckpoint -UseBasicParsing
+        Print-Success "HiFi-GAN V3 generator downloaded"
+    } catch {
+        Print-Error "Automatic HiFi-GAN V3 download failed: $($_.Exception.Message)"
+        Write-Host ""
+        Print-Warning "Download manually from:"
+        Write-Host $hifiGanCheckpointUrl -ForegroundColor Yellow
+        Write-Host "Save it as: $hifiGanCheckpoint"
+        exit 1
     }
 } else {
-    Print-Success "HiFi-GAN checkpoint already exists"
+    Print-Success "HiFi-GAN V3 generator already exists"
 }
+
+if (-not (Test-Path $hifiGanConfig)) {
+    Print-Info "Downloading official HiFi-GAN V3 config..."
+    try {
+        Invoke-WebRequest -Uri $hifiGanConfigUrl -OutFile $hifiGanConfig -UseBasicParsing
+        Print-Success "HiFi-GAN V3 config downloaded"
+    } catch {
+        Print-Error "Could not download HiFi-GAN V3 config: $($_.Exception.Message)"
+        exit 1
+    }
+} else {
+    Print-Success "HiFi-GAN V3 config already exists"
+}
+
+# Normalize the mirror checkpoint into the standard HiFi-GAN checkpoint format.
+# Upstream HiFi-GAN expects torch.load(... )['generator'].
+Print-Info "Validating HiFi-GAN V3 checkpoint format..."
+$normalizeScript = @'
+import sys
+from pathlib import Path
+import torch
+
+checkpoint_path = Path(sys.argv[1])
+tmp_path = checkpoint_path.with_name(checkpoint_path.name + ".normalized")
+obj = torch.load(checkpoint_path, map_location="cpu")
+
+if isinstance(obj, dict) and "generator" in obj:
+    state = obj
+else:
+    state = {"generator": obj}
+
+torch.save(state, tmp_path)
+tmp_path.replace(checkpoint_path)
+print("checkpoint format OK")
+'@
+$normalizePath = Join-Path $env:TEMP "normalize_hifigan_checkpoint.py"
+Set-Content -Path $normalizePath -Value $normalizeScript -Encoding UTF8
+python $normalizePath $hifiGanCheckpoint
+Remove-Item $normalizePath -Force
+Print-Success "HiFi-GAN V3 checkpoint validated"
 
 # Check if MFA aligned cache exists
 Print-Info "Checking for MFA aligned cache..."

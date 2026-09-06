@@ -164,53 +164,65 @@ else
     print_warning "HiFi-GAN repository already exists, skipping clone..."
 fi
 
-# Download HiFi-GAN checkpoint
-print_info "Checking HiFi-GAN checkpoint..."
-if [ ! -d "vocoder_checkpoints/LJ_FT_T2_V3" ]; then
-    print_info "Downloading HiFi-GAN checkpoint (LJ Speech fine-tuned)..."
-    echo "This is a ~150MB download and may take a few minutes..."
-    
-    cd vocoder_checkpoints
-    
-    # Try multiple download methods
-    DOWNLOAD_SUCCESS=false
-    
-    # Method 1: wget
-    if command -v wget &> /dev/null && [ "$DOWNLOAD_SUCCESS" = false ]; then
-        print_info "Using wget to download..."
-        if wget --no-check-certificate 'https://drive.google.com/uc?export=download&id=1n0bsIYdTV79EFxkPF4v3g-zmF_6BTrtn' -O LJ_FT_T2_V3.tar.gz 2>/dev/null; then
-            DOWNLOAD_SUCCESS=true
-        fi
-    fi
-    
-    # Method 2: curl
-    if command -v curl &> /dev/null && [ "$DOWNLOAD_SUCCESS" = false ]; then
-        print_info "Using curl to download..."
-        if curl -L 'https://drive.google.com/uc?export=download&id=1n0bsIYdTV79EFxkPF4v3g-zmF_6BTrtn' -o LJ_FT_T2_V3.tar.gz 2>/dev/null; then
-            DOWNLOAD_SUCCESS=true
-        fi
-    fi
-    
-    if [ "$DOWNLOAD_SUCCESS" = true ] && [ -f "LJ_FT_T2_V3.tar.gz" ]; then
-        print_info "Extracting HiFi-GAN checkpoint..."
-        tar -xzf LJ_FT_T2_V3.tar.gz
-        rm LJ_FT_T2_V3.tar.gz
-        cd ..
-        print_success "HiFi-GAN checkpoint downloaded and extracted"
+# Download HiFi-GAN V3 checkpoint
+print_info "Checking HiFi-GAN V3 checkpoint..."
+HIFIGAN_DIR="vocoder_checkpoints/LJ_FT_T2_V3"
+HIFIGAN_CHECKPOINT="${HIFIGAN_DIR}/generator_v3"
+HIFIGAN_CONFIG="${HIFIGAN_DIR}/config.json"
+HIFIGAN_CHECKPOINT_URL="https://github.com/csukuangfj/models/raw/refs/heads/master/hifigan/generator_v3"
+HIFIGAN_CONFIG_URL="https://raw.githubusercontent.com/jik876/hifi-gan/master/config_v3.json"
+
+mkdir -p "$HIFIGAN_DIR"
+
+if [ ! -f "$HIFIGAN_CHECKPOINT" ]; then
+    print_info "Downloading HiFi-GAN V3 generator from maintained GitHub mirror..."
+    if command -v curl &> /dev/null; then
+        curl -fL --retry 3 --retry-delay 2 "$HIFIGAN_CHECKPOINT_URL" -o "$HIFIGAN_CHECKPOINT"
+    elif command -v wget &> /dev/null; then
+        wget --tries=3 "$HIFIGAN_CHECKPOINT_URL" -O "$HIFIGAN_CHECKPOINT"
     else
-        cd ..
-        print_error "Automatic download failed."
-        echo ""
-        print_warning "Please download manually:"
-        echo "1. Visit: https://drive.google.com/file/d/1n0bsIYdTV79EFxkPF4v3g-zmF_6BTrtn/view"
-        echo "2. Download LJ_FT_T2_V3.tar.gz"
-        echo "3. Extract to: vocoder_checkpoints/"
-        echo "4. Re-run this script"
-        echo ""
+        print_error "Neither curl nor wget is installed."
+        exit 1
     fi
+    print_success "HiFi-GAN V3 generator downloaded"
 else
-    print_success "HiFi-GAN checkpoint already exists"
+    print_success "HiFi-GAN V3 generator already exists"
 fi
+
+if [ ! -f "$HIFIGAN_CONFIG" ]; then
+    print_info "Downloading official HiFi-GAN V3 config..."
+    if command -v curl &> /dev/null; then
+        curl -fL --retry 3 --retry-delay 2 "$HIFIGAN_CONFIG_URL" -o "$HIFIGAN_CONFIG"
+    else
+        wget --tries=3 "$HIFIGAN_CONFIG_URL" -O "$HIFIGAN_CONFIG"
+    fi
+    print_success "HiFi-GAN V3 config downloaded"
+else
+    print_success "HiFi-GAN V3 config already exists"
+fi
+
+# Normalize the mirror checkpoint into the standard HiFi-GAN checkpoint format.
+# Upstream HiFi-GAN expects torch.load(... )['generator'].
+print_info "Validating HiFi-GAN V3 checkpoint format..."
+python3 - "$HIFIGAN_CHECKPOINT" <<'PY'
+import sys
+from pathlib import Path
+import torch
+
+checkpoint_path = Path(sys.argv[1])
+tmp_path = checkpoint_path.with_name(checkpoint_path.name + ".normalized")
+obj = torch.load(checkpoint_path, map_location="cpu")
+
+if isinstance(obj, dict) and "generator" in obj:
+    state = obj
+else:
+    state = {"generator": obj}
+
+torch.save(state, tmp_path)
+tmp_path.replace(checkpoint_path)
+print("checkpoint format OK")
+PY
+print_success "HiFi-GAN V3 checkpoint validated"
 
 # Check if MFA aligned cache exists
 print_header ""
@@ -512,7 +524,11 @@ echo ""
 echo "HiFi-GAN Vocoder:"
 if [ -d "vocoder_checkpoints/LJ_FT_T2_V3" ]; then
     echo "✓ HiFi-GAN checkpoint found"
-    ls -lh vocoder_checkpoints/LJ_FT_T2_V3/g_* 2>/dev/null | head -n 1
+    if ls vocoder_checkpoints/LJ_FT_T2_V3/g_* >/dev/null 2>&1; then
+        ls -lh vocoder_checkpoints/LJ_FT_T2_V3/g_* | head -n 1
+    elif [ -f "vocoder_checkpoints/LJ_FT_T2_V3/generator_v3" ]; then
+        ls -lh "vocoder_checkpoints/LJ_FT_T2_V3/generator_v3"
+    fi
 else
     echo "✗ HiFi-GAN checkpoint not found"
 fi

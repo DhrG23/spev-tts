@@ -280,7 +280,7 @@ class RealMetricsFastSpeech2(nn.Module):
 # 2. DATASET (Fixed)
 # =========================================================
 class RealMetricsDataset(Dataset):
-    def __init__(self, data_dir, textgrid_dir=None, cache_dir='cache_stable', force_rebuild=True):
+    def __init__(self, data_dir, textgrid_dir=None, cache_dir='cache_stable', force_rebuild=False):
         self.cache_dir = cache_dir
         self.metadata = []
         
@@ -479,7 +479,8 @@ class Trainer:
         os.makedirs(self.log_dir, exist_ok=True)
         os.makedirs(self.ckpt_dir, exist_ok=True)
         
-        full_dataset = RealMetricsDataset(args.data_dir, args.textgrid_dir)
+        full_dataset = RealMetricsDataset(args.data_dir, args.textgrid_dir,
+                                           force_rebuild=args.force_rebuild_cache)
         self.vocab = full_dataset.vocab
         self.stats = full_dataset.stats
         
@@ -793,6 +794,9 @@ def main():
     parser.add_argument('--textgrid_dir', type=str, help="Path to MFA .TextGrid files")
     parser.add_argument('--name', type=str, default='run_stable')
     parser.add_argument('--resume', type=str)
+    parser.add_argument('--force_rebuild_cache', action='store_true',
+                        help="Wipe and rebuild cache_stable/ even if a valid cache already exists "
+                             "(only needed after changing the dataset or preprocessing logic)")
     parser.add_argument('--epochs', type=int, default=100)
     parser.add_argument('--batch_size', type=int, default=16)
     parser.add_argument('--grad_accum', type=int, default=1)
