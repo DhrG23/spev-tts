@@ -24,6 +24,7 @@ env/
 .venv/
 .env/
 cache_stable/
-test_advanced.sh
-test_inference.sh
-train_expressive.sh
+./test_advanced.sh
+./test_inference.sh
+./train_expressive.sh
+*.tar.gz

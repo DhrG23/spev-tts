@@ -499,6 +499,17 @@ class Trainer:
         self.step_num = 0
         
         self.vocoder = None
+        self.start_epoch = 0
+
+        if args.drive_backup_dir:
+            try:
+                import google.colab  # noqa: F401
+                print(f"📁 Running in Colab. Checkpoints will back up to: "
+                      f"{os.path.join(args.drive_backup_dir, args.name)}")
+                print("   Make sure you've already run drive.mount('/content/drive') "
+                      "in a notebook cell before training, or this path won't exist yet.")
+            except ImportError:
+                print(f"📁 Checkpoints will back up to: {os.path.join(args.drive_backup_dir, args.name)}")
 
         if args.resume:
             print(f"♻️ Resuming from {args.resume}...")
@@ -506,6 +517,11 @@ class Trainer:
             self.model.load_state_dict(ckpt['model'])
             if 'optimizer' in ckpt: self.optimizer.load_state_dict(ckpt['optimizer'])
             if 'step_num' in ckpt: self.step_num = ckpt['step_num']
+            if 'epoch' in ckpt:
+                # ckpt['epoch'] is the 0-indexed epoch that was just completed when saved,
+                # so resume training starting from the next one.
+                self.start_epoch = ckpt['epoch'] + 1
+                print(f"   Resuming at epoch {self.start_epoch + 1} (--epochs counts total epochs, not additional ones)")
 
     def get_lr_lambda(self):
         """Warmup scheduler to prevent early instability"""
@@ -514,21 +530,47 @@ class Trainer:
             return min(step / self.warmup_steps, 1.0)
         return lr_lambda
 
+    def _save_checkpoint(self, state, filename):
+        """Saves a checkpoint locally, then best-effort mirrors it to
+        --drive_backup_dir if one was given (e.g. a mounted Google Drive
+        path in Colab). Backup failures are logged but never crash training
+        - a temporarily unmounted/slow Drive shouldn't kill a training run."""
+        local_path = os.path.join(self.ckpt_dir, filename)
+        torch.save(state, local_path)
+
+        if self.args.drive_backup_dir:
+            try:
+                backup_dir = os.path.join(self.args.drive_backup_dir, self.args.name)
+                os.makedirs(backup_dir, exist_ok=True)
+                backup_path = os.path.join(backup_dir, filename)
+                shutil.copy2(local_path, backup_path)
+            except Exception as e:
+                print(f"⚠️  Drive backup failed for {filename} (training continues): {e}")
+
+        return local_path
+
     def train(self):
+        nw = self.args.num_workers
         train_loader = DataLoader(
             self.train_ds, batch_size=self.args.batch_size, shuffle=True, 
-            collate_fn=collate_fn, num_workers=4, pin_memory=True, persistent_workers=True
+            collate_fn=collate_fn, num_workers=nw,
+            pin_memory=(nw > 0), persistent_workers=(nw > 0)
         )
         val_loader = DataLoader(
             self.val_ds, batch_size=self.args.batch_size, shuffle=False, 
-            collate_fn=collate_fn, num_workers=2
+            collate_fn=collate_fn, num_workers=min(nw, 2)
         )
         
         best_loss = float('inf')
         nan_count = 0
         max_nans = 10  # Stop if too many NaN batches
 
-        for epoch in range(self.args.epochs):
+        if self.start_epoch >= self.args.epochs:
+            print(f"Already at epoch {self.start_epoch}/{self.args.epochs} - nothing to do. "
+                  f"Increase --epochs if you want to keep training.")
+            return
+
+        for epoch in range(self.start_epoch, self.args.epochs):
             self.model.train()
             total_loss = 0
             steps = 0
@@ -584,6 +626,24 @@ class Trainer:
                         for param_group in self.optimizer.param_groups:
                             param_group['lr'] = lr
                         self.optimizer.step()
+
+                        # Optional safety net for long epochs on Colab/flaky
+                        # connections: checkpoint mid-epoch too, not just at
+                        # epoch boundaries. Saved epoch is (epoch - 1), the
+                        # last FULLY completed epoch, so a resume correctly
+                        # redoes the interrupted epoch from scratch rather
+                        # than silently skipping it.
+                        if self.args.checkpoint_every_n_steps > 0 and \
+                           self.step_num % self.args.checkpoint_every_n_steps == 0:
+                            mid_state = {
+                                'model': self.model.state_dict(),
+                                'optimizer': self.optimizer.state_dict(),
+                                'vocab': self.vocab,
+                                'stats': self.stats,
+                                'step_num': self.step_num,
+                                'epoch': epoch - 1
+                            }
+                            self._save_checkpoint(mid_state, "last.pt")
                     else:
                         print(f"\n⚠️  WARNING: Infinite gradient norm. Skipping step.")
                         self.optimizer.zero_grad()
@@ -611,10 +671,10 @@ class Trainer:
                 'step_num': self.step_num,
                 'epoch': epoch
             }
-            torch.save(state, os.path.join(self.ckpt_dir, "last.pt"))
+            self._save_checkpoint(state, "last.pt")
             if val_loss < best_loss and not math.isnan(val_loss):
                 best_loss = val_loss
-                torch.save(state, os.path.join(self.ckpt_dir, "best.pt"))
+                self._save_checkpoint(state, "best.pt")
                 print(f"✅ New best model saved! Val Loss: {best_loss:.4f}")
 
     def validate(self, loader, epoch):
@@ -797,8 +857,22 @@ def main():
     parser.add_argument('--force_rebuild_cache', action='store_true',
                         help="Wipe and rebuild cache_stable/ even if a valid cache already exists "
                              "(only needed after changing the dataset or preprocessing logic)")
+    parser.add_argument('--drive_backup_dir', type=str, default=None,
+                        help="If set, every checkpoint save (last.pt/best.pt) is also copied here "
+                             "under a <name>/ subfolder - e.g. a mounted Google Drive path in Colab "
+                             "such as /content/drive/MyDrive/spev_checkpoints. Backup failures are "
+                             "logged but never interrupt training.")
+    parser.add_argument('--checkpoint_every_n_steps', type=int, default=0,
+                        help="If >0, also save last.pt every N optimizer steps (not just at epoch "
+                             "end). Useful on Colab where a session can disconnect mid-epoch. 0 "
+                             "(default) disables this and only saves at epoch boundaries.")
     parser.add_argument('--epochs', type=int, default=100)
     parser.add_argument('--batch_size', type=int, default=16)
+    parser.add_argument('--num_workers', type=int, default=4,
+                        help="DataLoader worker processes. Default 4 is fine on most local machines, "
+                             "but Colab's free-tier ~2 vCPUs + small /dev/shm can deadlock at that "
+                             "many workers combined with pin_memory. Use 2 or 0 on Colab (0 disables "
+                             "multiprocessing/pin_memory entirely - slowest but immune to this hang).")
     parser.add_argument('--grad_accum', type=int, default=1)
     parser.add_argument('--lr', type=float, default=1e-3)
     parser.add_argument('--hifigan_dir', type=str, default='vocoder_checkpoints/LJ_FT_T2_V3')
