@@ -103,8 +103,6 @@ class VariancePredictor(nn.Module):
             ])
         self.layers = nn.Sequential(*layers)
         self.proj = nn.Linear(hidden_dim, 1)
-        # CRITICAL: Add layer norm to output
-        self.output_norm = nn.LayerNorm(1)
 
     def forward(self, x):
         x_t = x.transpose(1, 2)
@@ -116,7 +114,6 @@ class VariancePredictor(nn.Module):
             else:
                 x_t = layer(x_t)
         out = self.proj(x_t.transpose(1, 2))
-        out = self.output_norm(out)
         return out.squeeze(-1)
 
 class LengthRegulator(nn.Module):
@@ -493,8 +490,16 @@ class Trainer:
         self.model = RealMetricsFastSpeech2(len(self.vocab)).to(DEVICE)
         self.optimizer = optim.AdamW(self.model.parameters(), lr=args.lr, betas=(0.9, 0.98), eps=1e-9, weight_decay=0.01)
         
-        # CRITICAL: Add warmup scheduler
+        # CRITICAL FIX: warmup-only scheduler never decayed, holding LR at a
+        # constant peak value indefinitely after the first 4000 steps. Over
+        # many epochs that stalls/oscillates validation loss even while
+        # train loss keeps creeping down (classic "LR too high to settle"
+        # pattern). Now warmup is followed by a cosine decay down to
+        # --lr_min_ratio of the peak LR, spread across the full --epochs run.
         self.warmup_steps = 4000
+        steps_per_epoch = math.ceil(len(self.train_ds) / max(1, args.batch_size * args.grad_accum))
+        self.total_steps = max(self.warmup_steps + 1, steps_per_epoch * args.epochs)
+        self.lr_min_ratio = args.lr_min_ratio
         self.scheduler = self.get_lr_lambda()
         self.step_num = 0
         
@@ -514,8 +519,21 @@ class Trainer:
         if args.resume:
             print(f"♻️ Resuming from {args.resume}...")
             ckpt = torch.load(args.resume, map_location=DEVICE, weights_only=False)
-            self.model.load_state_dict(ckpt['model'])
-            if 'optimizer' in ckpt: self.optimizer.load_state_dict(ckpt['optimizer'])
+            missing, unexpected = self.model.load_state_dict(ckpt['model'], strict=False)
+            if unexpected:
+                print(f"   (Ignored {len(unexpected)} obsolete param(s) from an older architecture, "
+                      f"e.g. {unexpected[0]} - expected after the output_norm fix)")
+            if missing:
+                print(f"   ⚠️  {len(missing)} param(s) had no saved weights and use fresh init: {missing}")
+            if 'optimizer' in ckpt:
+                try:
+                    self.optimizer.load_state_dict(ckpt['optimizer'])
+                except ValueError as e:
+                    print(f"   ⚠️  Couldn't restore optimizer state (expected after the output_norm "
+                          f"architecture fix - param count changed): {e}")
+                    print("   Continuing with a freshly initialized optimizer. Model weights are "
+                          "unaffected; you only lose AdamW's momentum/variance history, which will "
+                          "rebuild itself over the next several hundred steps.")
             if 'step_num' in ckpt: self.step_num = ckpt['step_num']
             if 'epoch' in ckpt:
                 # ckpt['epoch'] is the 0-indexed epoch that was just completed when saved,
@@ -524,10 +542,16 @@ class Trainer:
                 print(f"   Resuming at epoch {self.start_epoch + 1} (--epochs counts total epochs, not additional ones)")
 
     def get_lr_lambda(self):
-        """Warmup scheduler to prevent early instability"""
+        """Warmup, then cosine decay down to lr_min_ratio of peak LR by
+        the end of training - prevents the LR staying pinned at its peak
+        for the whole run, which stalls validation loss improvement."""
         def lr_lambda(step):
             step = max(1, step)
-            return min(step / self.warmup_steps, 1.0)
+            if step < self.warmup_steps:
+                return step / self.warmup_steps
+            progress = min(1.0, (step - self.warmup_steps) / max(1, self.total_steps - self.warmup_steps))
+            cosine = 0.5 * (1 + math.cos(math.pi * progress))
+            return self.lr_min_ratio + (1 - self.lr_min_ratio) * cosine
         return lr_lambda
 
     def _save_checkpoint(self, state, filename):
@@ -806,7 +830,7 @@ def infer_tts(checkpoint_path, text, breathiness=0.1, roughness=0.05, brightness
     ph_to_idx = {p: i for i, p in enumerate(vocab)}
 
     model = RealMetricsFastSpeech2(len(vocab)).to(DEVICE)
-    model.load_state_dict(ckpt['model'])
+    model.load_state_dict(ckpt['model'], strict=False)
     model.eval()
 
     vocoder = Vocoder(hifigan_dir)
@@ -875,6 +899,10 @@ def main():
                              "multiprocessing/pin_memory entirely - slowest but immune to this hang).")
     parser.add_argument('--grad_accum', type=int, default=1)
     parser.add_argument('--lr', type=float, default=1e-3)
+    parser.add_argument('--lr_min_ratio', type=float, default=0.05,
+                        help="LR decays via cosine schedule (after warmup) down to this fraction "
+                             "of --lr by the final epoch, instead of staying flat at --lr forever. "
+                             "E.g. 0.05 means LR ends at 5%% of its peak value.")
     parser.add_argument('--hifigan_dir', type=str, default='vocoder_checkpoints/LJ_FT_T2_V3')
     parser.add_argument('--text', type=str, default='You are using the SPEV text-to-speech synthesis system.')
     parser.add_argument('--output', type=str, default='output.wav')
