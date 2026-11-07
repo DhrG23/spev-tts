@@ -65,8 +65,7 @@ Install Python dependencies:
 ```bash
 pip install -r requirements.txt
 ```
-`requirements.txt` now includes `torch`/`torchaudio` and `phonemizer`
-(these were missing before and are required by every script here).
+`requirements.txt` now includes `torch`/`torchaudio` and `phonemizer`.
 
 ## 🚀 Quick Start
 
